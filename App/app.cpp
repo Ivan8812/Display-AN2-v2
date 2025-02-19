@@ -1,5 +1,5 @@
-#include <air_signals.h>
 #include <app.h>
+#include <air_signals.h>
 #include <input_hal.h>
 #include <disp_bright_hal.h>
 #include <RotaryEncoder.h>
@@ -8,16 +8,13 @@
 #include <math.h>
 #include <gui.h>
 #include <cstdio>
+#include <array>
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wvolatile"
-#include "fdcan.h"
-#pragma GCC diagnostic pop
 
 #if APP_DEBUG
 	#define debug_print rs422_printf
 #else
-	static void debug_print(const char* fmt...) {}
+  #define debug_print(...)
 #endif
 
 using namespace std;
@@ -50,8 +47,8 @@ static void	icc_select(uint8_t item);
 static void	bad_icc_select(uint8_t item);
 static void	good_icc_select(uint8_t item);
 #endif
-static void can_serve(uint32_t dt);
-static void can_serve_init();
+static void can_serve();
+
 
 
 static RotaryEncoder::listener_t enc_brg = {brg_rotate, brg_click, brg_hold, dummy_timeout};
@@ -90,15 +87,14 @@ static gui_menu_t menu_good_icc = {nullptr, good_icc_items, 2, 0, good_icc_selec
 
 static gui_state_t gui_state = {0.0f, };
 static RotaryEncoder encoder(enc_brg);
-
-static float pres_dyn_offs = 0.0f;
+static volatile uint32_t systime = 0;
 
 //------------------------------------------------------------------------------
 void app_run()
 {
-#if 0
+#if APP_DEBUG
 	uint32_t refresh_cntr = 0;
-	uint64_t prev_time = 0;
+	uint32_t prev_time = 0;
 #endif
 
 	can_init();
@@ -108,9 +104,12 @@ void app_run()
 
  	while(1)
  	{
+ 	  can_serve();
   	gui_refresh(&gui_state);
   	lv_timer_handler();
-#if 0
+  	can_send_dat(CAN_HEARTBEAT_MFI, nullptr, 0);
+
+#if APP_DEBUG
   	refresh_cntr++;
   	uint32_t dt = systime - prev_time;
   	if(dt >= 1000)
@@ -129,175 +128,91 @@ void app_run()
 
 
 //------------------------------------------------------------------------------
-static void can_serve(uint32_t dt)
+static void can_serve()
 {
-	static uint32_t tim_roll = 0;
-	static uint32_t tim_pitch = 0;
-	static uint32_t tim_heading = 0;
-	static uint32_t tim_pstat = 0;
-	static uint32_t tim_pdyn = 0;
+  static array<uint32_t, CAN_TOTAL_BUFNR> rx_time {}; // initialized by zeros
+  static array<float, CAN_TOTAL_BUFNR> rx_val {};
+  enum
+  {
+    ATTITUDE_TIMEOUT = 100,
+    AIR_TIMEOUT = 500
+  };
 
-	tim_roll += dt;
-	tim_pitch += dt;
-	tim_heading += dt;
-	tim_pstat += dt;
-	tim_pdyn += dt;
- 	while(HAL_FDCAN_GetRxFifoFillLevel(&hfdcan2, FDCAN_RX_FIFO0))
- 	{
- 		FDCAN_RxHeaderTypeDef rx_hdr;
- 		uint8_t buf[8];
- 		if(HAL_FDCAN_GetRxMessage(&hfdcan2, FDCAN_RX_FIFO0, &rx_hdr, buf) != HAL_OK)
- 			break;
-
- 		switch(rx_hdr.Identifier)
- 		{
- 		case CAN_VAL_ROLL:
- 		{
- 			can_val_t* msg = (can_val_t*)buf;
- 			gui_state.valid_roll = msg->state.valid;
- 			gui_state.roll = msg->value/180.0f*PI;
- 			static uint8_t prev_cntr = 0;
- 			if((uint8_t)(msg->cntr - prev_cntr) != 1u)
- 				debug_print("roll cntrs: %d %d\r", msg->cntr, prev_cntr);
- 			prev_cntr = msg->cntr;
- 			tim_roll = 0;
- 			break;
- 		}
- 		case CAN_VAL_PITCH:
- 		{
- 			can_val_t* msg = (can_val_t*)buf;
- 			gui_state.valid_pitch = msg->state.valid;;
- 			gui_state.pitch = msg->value/180.0f*PI;
- 			static uint8_t prev_cntr = 0;
- 			if((uint8_t)(msg->cntr - prev_cntr) != 1u)
- 				debug_print("pitch cntrs: %d %d\r", msg->cntr, prev_cntr);
- 			prev_cntr = msg->cntr;
- 			tim_pitch = 0;
- 			break;
- 		}
- 		case CAN_VAL_HEADING:
- 		{
- 			can_val_t* msg = (can_val_t*)buf;
- 			gui_state.valid_heading = msg->state.valid;;
- 			gui_state.heading = msg->value/180.0f*PI;
- 			static uint8_t prev_cntr = 0;
- 			if((uint8_t)(msg->cntr - prev_cntr) != 1u)
- 				debug_print("heading cntrs: %d %d\r", msg->cntr, prev_cntr);
- 			prev_cntr = msg->cntr;
- 			tim_heading = 0;
- 			break;
- 		}
- 		case CAN_VAL_PRES_STAT:
- 		{
- 			can_val_t* msg = (can_val_t*)buf;
- 			gui_state.valid_altitude = msg->state.valid;
- 			gui_state.valid_ver_speed = msg->state.valid;
- 			static uint8_t prev_cntr = 0;
- 			if((uint8_t)(msg->cntr - prev_cntr) != 1u)
- 				debug_print("stat pres cntrs: %d %d\r", msg->cntr, prev_cntr);
- 			tim_pstat = 0;
- 			if(!msg->state.valid)
- 				break;
- 			float pres = msg->value;
- 			float ref = GUI_PRES_QNE;
- 			if(gui_state.pres_type == GUI_QFE)
- 				ref = gui_state.pres_qfe;
- 			else if(gui_state.pres_type == GUI_QNH)
- 			  ref = gui_state.pres_qnh;
- 			gui_state.altitude = altitude(pres, ref);
- 			static float prev_pres = ref;
- 			if((uint8_t)(msg->cntr - prev_cntr) == 1u)
- 				gui_state.vert_speed = vert_speed(pres, ref, (pres-prev_pres)*10.0f); // 10Hz msg rate
- 		  prev_cntr = msg->cntr;
- 		  prev_pres = pres;
- 		  break;
- 		}
- 		case CAN_VAL_PRES_DYN:
- 		{
- 			can_val_t* msg = (can_val_t*)buf;
- 			gui_state.valid_speed = msg->state.valid;
- 			gui_state.speed = air_speed(msg->value - pres_dyn_offs);
- 			static uint8_t prev_cntr = 0;
- 			if((uint8_t)(msg->cntr - prev_cntr) != 1u)
- 				debug_print("dyn pres cntrs: %d %d\r", msg->cntr, prev_cntr);
- 			prev_cntr = msg->cntr;
- 			tim_pdyn = 0;
- 			break;
- 		}
- 		case CAN_MTI_STATUS:
- 		{
- 		  can_msg_mti_stat_t* status = (can_msg_mti_stat_t*)buf;
- 			gui_state.icc_active = (*status & (1<<5)) ? true : false;
- 			break;
- 		}
-#if USE_MTI_ICC
- 		case CAN_MSG_RESULT:
- 		{
- 			gui_state.icc_active = false;
- 			can_icc_result_t* result = (can_icc_result_t*)buf;
- 			if(result->err)
- 				gui_state.menu = &menu_bad_icc;
- 			else
- 			{
- 				static char header [128];
- 				sprintf(header,"РЕЗУЛЬТАТ КАЛИБРОВКИ\r\rНОРМА: %d.%d\rРЕЖИМ: %dD",
- 						    (int)result->ddt, ((int)(result->ddt*100.0f))%100, result->dim);
- 				menu_good_icc.header = header;
- 				gui_state.menu = &menu_good_icc;
- 			}
- 			gui_state.mode = GUI_MENU;
- 			encoder.change_listener(enc_menu_timeless);
- 			break;
- 		}
-#endif
- 		default:
- 			break;
- 		};
- 	}
-
- 	if(tim_roll > 100)
- 		gui_state.valid_roll = false;
- 	if(tim_pitch > 100)
- 	  gui_state.valid_pitch = false;
- 	if(tim_heading > 100)
- 	  gui_state.valid_heading = false;
- 	if(tim_pdyn > 250)
- 	  gui_state.valid_speed = false;
- 	if(tim_pstat > 250)
- 	{
- 	  gui_state.valid_altitude = false;
- 	  gui_state.valid_ver_speed = false;
- 	}
-}
-//------------------------------------------------------------------------------
+  for(int i=0; i<CAN_TOTAL_BUFNR; i++)
+  {
+    FDCAN_RxHeaderTypeDef rx_hdr;
+    uint8_t buf[8];
+    if(HAL_FDCAN_IsRxBufferMessageAvailable(&can, i) && (HAL_FDCAN_GetRxMessage(&can, i, &rx_hdr, buf) == HAL_OK))
+    {
+      can_val_t* can_val = (can_val_t*)buf;
+      if(can_val->state.bins_ok && can_val->state.valid)
+      {
+        rx_time[i] = systime;
+        rx_val[i] = can_val->value;
+      }
+    }
+  }
 
 
-//------------------------------------------------------------------------------
-static void can_serve_init()
-{
-	static uint32_t cntr = 0;
+  // roll
+  if(((systime-rx_time[CAN_BUFNR_ROLL1]) < ATTITUDE_TIMEOUT) || ((systime-rx_time[CAN_BUFNR_ROLL2]) < ATTITUDE_TIMEOUT))
+  {
+    gui_state.valid_roll = true;
+    gui_state.roll = rx_val[((systime-rx_time[CAN_BUFNR_ROLL1]) < ATTITUDE_TIMEOUT) ? CAN_BUFNR_ROLL1 : CAN_BUFNR_ROLL2]/180.0f*PI;
+  }
+  else
+    gui_state.valid_roll = false;
 
- 	while(HAL_FDCAN_GetRxFifoFillLevel(&hfdcan2, FDCAN_RX_FIFO0))
- 	{
- 		FDCAN_RxHeaderTypeDef rx_hdr;
- 		uint8_t buf[8];
- 		if(HAL_FDCAN_GetRxMessage(&hfdcan2, FDCAN_RX_FIFO0, &rx_hdr, buf) != HAL_OK)
- 			break;
+  // pitch
+  if(((systime-rx_time[CAN_BUFNR_PITCH1]) < ATTITUDE_TIMEOUT) || ((systime-rx_time[CAN_BUFNR_PITCH2]) < ATTITUDE_TIMEOUT))
+  {
+    gui_state.valid_pitch = true;
+    gui_state.pitch = rx_val[((systime-rx_time[CAN_BUFNR_PITCH1]) < ATTITUDE_TIMEOUT) ? CAN_BUFNR_PITCH1 : CAN_BUFNR_PITCH2]/180.0f*PI;
+  }
+  else
+    gui_state.valid_pitch = false;
 
- 		if(rx_hdr.Identifier == CAN_VAL_PRES_DYN)
- 		{
- 			can_val_t* msg = (can_val_t*)buf;
- 			if(msg->state.valid)
- 			pres_dyn_offs += msg->value;
- 			if(++cntr == 20)
- 			{
- 				pres_dyn_offs /= cntr;
- 				gui_state.mode = GUI_TEST;
- 			}
- 		}
+  // heading
+  if(((systime-rx_time[CAN_BUFNR_HEADING1]) < ATTITUDE_TIMEOUT) || ((systime-rx_time[CAN_BUFNR_HEADING2]) < ATTITUDE_TIMEOUT))
+  {
+    gui_state.valid_heading = true;
+    gui_state.heading = rx_val[((systime-rx_time[CAN_BUFNR_HEADING1]) < ATTITUDE_TIMEOUT) ? CAN_BUFNR_HEADING1 : CAN_BUFNR_HEADING2]/180.0f*PI;
+  }
+  else
+    gui_state.valid_heading = false;
 
- 	}
+  // altitude
+  if(((systime-rx_time[CAN_BUFNR_PRES1]) < AIR_TIMEOUT) || ((systime-rx_time[CAN_BUFNR_PRES2]) < AIR_TIMEOUT))
+  {
+    gui_state.valid_altitude = true;
+    float pres = rx_val[((systime-rx_time[CAN_BUFNR_PRES1]) < AIR_TIMEOUT) ? CAN_BUFNR_PRES1 : CAN_BUFNR_PRES2];
+    float ref = GUI_PRES_QNE;
+    if(gui_state.pres_type == GUI_QFE)
+      ref = gui_state.pres_qfe;
+    else if(gui_state.pres_type == GUI_QNH)
+      ref = gui_state.pres_qnh;
+    gui_state.altitude = altitude(pres, ref);
+  }
+  else
+    gui_state.valid_altitude = false;
 
+  // airspeed
+  if(((systime-rx_time[CAN_BUFNR_AIRSPEED1]) < AIR_TIMEOUT) || ((systime-rx_time[CAN_BUFNR_AIRSPEED2]) < AIR_TIMEOUT))
+  {
+    gui_state.valid_speed = true;
+    gui_state.speed = rx_val[((systime-rx_time[CAN_BUFNR_AIRSPEED1]) < AIR_TIMEOUT) ? CAN_BUFNR_AIRSPEED1 : CAN_BUFNR_AIRSPEED2]*3.6f;
+  }
+  else
+    gui_state.valid_speed = false;
+
+  // vertspeed
+  if(((systime-rx_time[CAN_BUFNR_VERTSPEED1]) < AIR_TIMEOUT) || ((systime-rx_time[CAN_BUFNR_VERTSPEED2]) < AIR_TIMEOUT))
+  {
+    gui_state.valid_ver_speed = true;
+    gui_state.vert_speed = rx_val[((systime-rx_time[CAN_BUFNR_VERTSPEED1]) < AIR_TIMEOUT) ? CAN_BUFNR_VERTSPEED1 : CAN_BUFNR_VERTSPEED2];
+  }
+  else
+    gui_state.valid_ver_speed = false;
 }
 //------------------------------------------------------------------------------
 
@@ -305,9 +220,14 @@ static void can_serve_init()
 //------------------------------------------------------------------------------
 void app_on_timer()
 {
-	static uint32_t systime = 0;
+  systime = systime + 1;
 
-	if (gui_state.mode == GUI_TEST)
+  if (gui_state.mode == GUI_INIT)
+  {
+    if (systime == 500)
+      gui_state.mode = GUI_TEST;
+  }
+  else if (gui_state.mode == GUI_TEST)
 	{
 		static uint32_t test_timeot = 1000;
 		if(test_timeot == 0)
@@ -319,24 +239,18 @@ void app_on_timer()
 			test_timeot--;
 	}
 
-	if (gui_state.mode == GUI_INIT)
-		can_serve_init();
-	else
-		can_serve(HAL_TICK_FREQ_DEFAULT);
-
+  rs422_serve();
 	lv_tick_inc(HAL_TICK_FREQ_DEFAULT);
 	encoder.serve_input(input_get_enc(), input_get_btn());
-  rs422_serve();
-  rs422_test_rx2tx();
 
+#if 0
   static uint8_t sync_cntr = 0;
   if(++sync_cntr == 20)
   {
   	sync_cntr = 0;
   	can_send_dat(CAN_HEARTBEAT(1), nullptr, 0);
   }
-
-  systime++;
+#endif
 }
 //------------------------------------------------------------------------------
 

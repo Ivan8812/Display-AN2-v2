@@ -57,6 +57,7 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define can hfdcan2
 #define HEAT_PWM_Pin GPIO_PIN_12
 #define HEAT_PWM_GPIO_Port GPIOD
 #define DISP_RST_Pin GPIO_PIN_12

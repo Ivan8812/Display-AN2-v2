@@ -8,7 +8,7 @@
 #include "lv_port.h"
 #include "ltdc.h"
 
-static uint8_t display_buf[2][DISP_HOR_RES*DISP_VER_RES*3] __attribute__ ((section(".video_ram")));
+static uint8_t display_buf[2][DISP_HOR_RES*DISP_VER_RES*2] __attribute__ ((section(".video_ram")));
 
 static void disp_flush(lv_disp_drv_t * disp_drv, const lv_area_t * area, lv_color_t * color_p);
 static volatile uint32_t buf_addr = (uint32_t)display_buf[0];

@@ -45,14 +45,12 @@ MEMORY
 {
   FLASH (rx)     : ORIGIN = 0x08000000, LENGTH = 2048K
   DTCMRAM (xrw)  : ORIGIN = 0x20000000, LENGTH = 128K
-  /*RAM_D1 (xrw)   : ORIGIN = 0x24000000, LENGTH = 512K*/
-  SDRAM_VID (xrw): ORIGIN = 0x24000000, LENGTH = 512K
+  RAM_D1 (xrw)   : ORIGIN = 0x24000000, LENGTH = 512K
   RAM_D2 (xrw)   : ORIGIN = 0x30000000, LENGTH = 288K
   RAM_D3 (xrw)   : ORIGIN = 0x38000000, LENGTH = 64K
   ITCMRAM (xrw)  : ORIGIN = 0x00000000, LENGTH = 64K
-  /*SDRAM_VID (rw) : ORIGIN = 0x60000000, LENGTH = 512K*/
-  /*SDRAM (rw)     : ORIGIN = 0x60080000, LENGTH = 8M-512K*/
-  SDRAM (rw)     : ORIGIN = 0x60000000, LENGTH = 8M
+  SDRAM_VID (rw) : ORIGIN = 0x60000000, LENGTH = 1M
+  SDRAM (rw)     : ORIGIN = 0x60100000, LENGTH = 7M
 }
 
 /* Define output sections */
@@ -177,9 +175,9 @@ SECTIONS
   
   .lvgl_ram(NOLOAD): 
   {
-    . = . + 0x4000;
+    /*. = . + 0x4000;*/
     *(.lvgl_ram*)
-  } >SDRAM
+  } >RAM_D1
 
   /* Remove information from the standard libraries */
   /DISCARD/ :
