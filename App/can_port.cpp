@@ -92,13 +92,8 @@ void can_init()
 
 
 //------------------------------------------------------------------------------
-bool can_send_dat(uint16_t id, void* data, const uint8_t len)
+bool can_send_dat(uint16_t id, const void* data, const uint8_t len)
 {
-	// check CAN state first of all
-	//uint32_t psr = (can.Instance->PSR);
-	//if(psr & 0x80) // bus-off status
-	//	HAL_FDCAN_Start(&can);
-
 	if(len > 8)
 		return false;
 
@@ -109,7 +104,7 @@ bool can_send_dat(uint16_t id, void* data, const uint8_t len)
 	tx_hdr.Identifier = id;
 	tx_hdr.IdType = FDCAN_EXTENDED_ID;
 	tx_hdr.TxFrameType = FDCAN_DATA_FRAME;
-	tx_hdr.DataLength = len << 16;
+	tx_hdr.DataLength = len;
 	tx_hdr.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
 	tx_hdr.BitRateSwitch = FDCAN_BRS_OFF;
 	tx_hdr.FDFormat = FDCAN_CLASSIC_CAN;

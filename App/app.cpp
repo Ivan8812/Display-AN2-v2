@@ -9,6 +9,7 @@
 #include <gui.h>
 #include <cstdio>
 #include <array>
+#include <build_time.h>
 
 
 #if APP_DEBUG
@@ -107,7 +108,6 @@ void app_run()
  	  can_serve();
   	gui_refresh(&gui_state);
   	lv_timer_handler();
-  	can_send_dat(CAN_HEARTBEAT_MFI, nullptr, 0);
 
 #if APP_DEBUG
   	refresh_cntr++;
@@ -243,12 +243,13 @@ void app_on_timer()
 	lv_tick_inc(HAL_TICK_FREQ_DEFAULT);
 	encoder.serve_input(input_get_enc(), input_get_btn());
 
-#if 0
-  static uint8_t sync_cntr = 0;
-  if(++sync_cntr == 20)
+#if 1
+  static uint32_t cntr = 0;
+  if(++cntr == 1000)
   {
-  	sync_cntr = 0;
-  	can_send_dat(CAN_HEARTBEAT(1), nullptr, 0);
+  	cntr = 0;
+  	static const can_msg_version_t version = {.timestamp=BuildTime, .maj_ver=MajVersion, .min_ver=MinVersion, .build=Build};
+  	can_send_dat(CAN_VERSION_MFI, &version, sizeof(version));
   }
 #endif
 }

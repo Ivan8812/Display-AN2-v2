@@ -9,6 +9,13 @@ extern "C"
 #include "main.h"
 #include "fdcan.h"
 
+//--------------------------------------
+// версия ПО
+const uint8_t MajVersion = 0;
+const uint8_t MinVersion = 1;
+const uint8_t Build = 1;
+//--------------------------------------
+
 void app_run(void);
 void app_on_timer(void);
 
